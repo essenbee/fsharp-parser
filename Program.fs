@@ -66,7 +66,7 @@ let pbind (ufunc : 'T -> Parser<'U>) (P tparser) : Parser<'U> =
 // let p = pchar |> pbind (fun first -> pchar |> pbind (fun second -> preturn (first, second)))
 // prun p "Hello Marten from F#!" |> printfn "%A"
 //
-// This should produce **Some(('H','e'), 2)**, as it "chained" two pchar parsers together,
+// This should produce **Some(('H','e'), 2)**, as it "chained" two *pchar* parsers together,
 // and so gave us the first and second characters of the string, and moved the position
 // in the string to 2.
 
@@ -95,18 +95,24 @@ let pmany (P tparser) : Parser<'T list> =
 //
 type ParserBuilder () =
     class
-        // Enables let! - used for composing computation expressions of the same type and getting a result
+        // Enables let! - binds the **result** of a call to another computation expression to a name
+        // (compare with *await* in C#, that unwraps a Task<T> to give a result of T)
         member x.Bind (tparser, ufunc) = pbind ufunc tparser
-        // Enables do! - - used for composing computation expressions
+        // Enables do! - used for calling another computation expression that returns a unit-like
+        // type (as defined by the x.Zero member below)
         member x.Combine (tparser, uparser) = pcombine uparser tparser
-        // Enables return
+        // Enables return - returns *value*
         member x.Return value = preturn value
-        // Enables return!
+        // Enables return! - realizes the value of a computation expression and wraps that result
+        // as a Parser<'T>
         member x.ReturnFrom p = p : Parser<'T>
-        // allows if x then expr with no else
+        // Allows if...then expression with no else - returns unit
         member x.Zero () = preturn ()
     end
 let parser = ParserBuilder ()
+
+// From this point on, we express parsers using the computation expression above, as it
+// simplifies combining parsers for many people.
 
 // Similar to *pmany*, this parser works against 1 or more 'T, rather than 0 or more.
 // For example, *pmany1 pletter* is a parse of 1 or more consecutive letters in a string.
@@ -121,8 +127,8 @@ let pmany1 tparser =
 let psatisfy (satisfy : char -> bool) : Parser<char> =
     parser {
         let! char = pchar     // parse a char
-        if satisfy char then  // if the satisfy function returns true
-            return char       // return char
+        if satisfy char then  // if the satisfy function evaluates to true
+            return char       // return the char
         else
             return! pfail ()  // else fail
     }
@@ -139,7 +145,7 @@ let pletter = psatisfy Char.IsLetter
 //
 let pwhitespace = psatisfy Char.IsWhiteSpace
 
-// *pmap* takes a fmapping unction that maps a type T to a type U and a parser of T.
+// *pmap* takes a mapping function that maps a type T to a type U, and a parser of T.
 // The mapping function is applied to the value parsed and is then returned. An F#
 // *map* is functionally equivalent to Select in LINQ.
 //
@@ -186,12 +192,13 @@ let pskipchar ch =
 
 let padd =
     parser {
-        let! first = pint
-        do! pskipchar '+'
-        let! second = pint
-        return first + second
+        let! first = pint      // first integer
+        do! pskipchar '+'      // using do! because skipchar returns unit-like value
+        let! second = pint     // second integer
+        return first + second  // return the sum
     }
 
+// Parser for a key-value pair of the form "<string>=<int>"
 let pkeyvalue =
     parser {
         let! first = pstring pletter
@@ -200,6 +207,7 @@ let pkeyvalue =
         return (first, second)
     }
 
+// Parser for many key-value pairs e.g. "<string>=<int> <string>=<int> <string>=<int>"
 let pkeyvalues =
     let helper =
         parser {
