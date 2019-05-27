@@ -38,21 +38,21 @@ let pfail () : Parser<'T> =
 // one parser and feed that as the input into another parser. The problem is the inputs
 // and outputs are incompatible! We defined a parser as producing an **Option<'T * int>** 
 // and a parser, of course, takes a string and an int as its inputs, not an Option of 
-// Some or None! 
+// Some or None (or simply put, success or failure)! 
 //` 
 //` ![](2E0F27655D9D6D5B08C0D5204ECCFC46.png)
 
-// We need to somehow provide an "adapter" that allows us to "chain" parsers
-// together. The function *pbind* provides that adapter:
+// We need to somehow provide a "combiner" that allows us to "chain" parsers
+// together. The function *pbind* provides that combiner:
 //
 // * *ufunc* is a function that takes a **type** T and returns a parser of some type U
 // * *tparser* is a parser of the _same_ type U
 // 
-// We run *str* and *pos* through the parser *tparser*. If that parser returns Some
-// *tvalue* and *tpos*, we pass *tvalue* as an agrument to *ufunc*. This function
-// gives us back a new parser determined by the **type** of *tvalue*, not its value.
-// It is to this new parser (*uparser*) that we subsequently pass *str* and the 
-// new *tpos*. of course, if *tparser* returns None, then we just return that. 
+// We run *str* and *pos* through the parser *tparser*. If that parser succeeds, it
+// returns Some *tvalue* and *tpos*, we pass *tvalue* as an argument to *ufunc*.
+// This function gives us back a new parser determined by the **type** of *tvalue*,
+// not its value. It is to this new parser (*uparser*) that we subsequently pass *str*
+// and the new *tpos*. of course, if *tparser* fails, then we just return None. 
 //
 let pbind (ufunc : 'T -> Parser<'U>) (P tparser) : Parser<'U> =
     P <| fun str pos ->
@@ -70,10 +70,12 @@ let pbind (ufunc : 'T -> Parser<'U>) (P tparser) : Parser<'U> =
 // and so gave us the first and second characters of the string, and moved the position
 // in the string to 2.
 
-// Given two parsers *uparser* and *tparser*, combine them using *pbind*.
-// Note that the lambda **fun _ -> uparser**, which is our *ufunc* in the *pbind*
-// function, always gives back a *uparser* no matter the type of the argument
-// (_ is the discard in F#).
+// Given two parsers *uparser* and *tparser*, combine them using *pbind* as follows.
+// Studying the definition of *pbind*, its clear that the lambda **fun _ -> uparser**,
+// which is our *ufunc* in the *pbind* function, always gives back a *uparser*,
+// no matter the type of the value returned from *tparser* (_ is the discard in F#).
+// This means that **tparser |> pcombine uparser** runs *tparser*, discards the result,
+// and returns the result of *uparser*.
 //
 let pcombine uparser tparser = tparser |> pbind (fun _ -> uparser)
 
