@@ -29,40 +29,49 @@ let prun (P aParser) str = aParser str 0
 let preturn value : Parser<'T> = 
     P <| fun str pos -> Some (value, pos)
 
-// The function *pfail* takes unit and always returns None.
+// The function *pfail* takes unit and always returns None. See *psatisfy* later.
 //
 let pfail () : Parser<'T> = 
     P <| fun str pos -> None
 
 // *pbind* follows a standard functional pattern. Here we want to take the output of
-// one parser and feed that as the input into another parser. The problem is, we
-// have defined a parser as producing an **Option<'T * int>** rather than a simple value.
-// A parser, of course, takes a string and an int, not values wrapped up in an Option!
+// one parser and feed that as the input into another parser. The problem is the inputs
+// and outputs are incompatible! We defined a parser as producing an **Option<'T * int>** 
+// and a parser, of course, takes a string and an int as its inputs, not an Option of 
+// Some or None! 
+//` 
+//` ![](2E0F27655D9D6D5B08C0D5204ECCFC46.png)
+
+// We need to somehow provide an "adapter" that allows us to "chain" parsers
+// together. The function *pbind* provides that adapter:
 //
 // * *ufunc* is a function that takes a **type** T and returns a parser of some type U
-// * *tparser* is a parser of the same type U
+// * *tparser* is a parser of the _same_ type U
 // 
 // We run *str* and *pos* through the parser *tparser*. If that parser returns Some
 // *tvalue* and *tpos*, we pass *tvalue* as an agrument to *ufunc*. This function
 // gives us back a new parser determined by the **type** of *tvalue*, not its value.
-// It is to this new parser (*uparser*) that we subsequently pass *str* and *tpos*
-// in order to return the **Option<'U * int>** we expect. 
+// It is to this new parser (*uparser*) that we subsequently pass *str* and the 
+// new *tpos*. of course, if *tparser* returns None, then we just return that. 
 //
 let pbind (ufunc : 'T -> Parser<'U>) (P tparser) : Parser<'U> =
     P <| fun str pos ->
         match tparser str pos with
         | None -> None
-        | Some (tvalue, tpos) ->
+        | Some (tvalue, newPos) ->
             let (P uparser) = ufunc tvalue
-            uparser str tpos 
+            uparser str newPos 
 
-// Try it out: let p = pchar |> pbind (fun f -> pchar |> pbind (fun s -> preturn (f, s)))
-//             prun p "Hello Marten from F#!" |> printfn "%A"
+// Try it out:-
+// let p = pchar |> pbind (fun first -> pchar |> pbind (fun second -> preturn (first, second)))
+// prun p "Hello Marten from F#!" |> printfn "%A"
 //
-// This should produce **Some(('H','e'), 2)**, as it bound two pchar parsers together.
+// This should produce **Some(('H','e'), 2)**, as it "chained" two pchar parsers together,
+// and so gave us the first and second characters of the string, and moved the position
+// in the string to 2.
 
-// Given two parsers *uparser* and *tparser*, combine then using *pbind* them.
-// Note that the lambda fun _ -> uparser, which is our *ufunc* in the *pbind*
+// Given two parsers *uparser* and *tparser*, combine them using *pbind*.
+// Note that the lambda **fun _ -> uparser**, which is our *ufunc* in the *pbind*
 // function, always gives back a *uparser* no matter the type of the argument
 // (_ is the discard in F#).
 //
@@ -80,14 +89,15 @@ let pmany (P tparser) : Parser<'T list> =
             | Some (tvalue, tpos) -> loop (tvalue::values) tpos
         loop [] pos
 
-// A computational expression; this will make it simpler for us to build up more 
-// complex parsers. This is a standard pattern in functional programming.
+// A computation expression; this will make it simpler for us to build up more 
+// complex parsers. This is a standard pattern in functional programming. Notice
+// how it uses *pbind*, *pcombine* and *preturn* that we defined earlier.
 //
 type ParserBuilder () =
     class
-        // Enables let!
+        // Enables let! - used for composing computation expressions of the same type and getting a result
         member x.Bind (tparser, ufunc) = pbind ufunc tparser
-        // Enables do!
+        // Enables do! - - used for composing computation expressions
         member x.Combine (tparser, uparser) = pcombine uparser tparser
         // Enables return
         member x.Return value = preturn value
@@ -98,48 +108,73 @@ type ParserBuilder () =
     end
 let parser = ParserBuilder ()
 
-let psatisfy (satisfy : char -> bool) : Parser<char> = 
-    parser {
-        let! char = pchar
-        if satisfy char then   
-            return char
-        else
-            return! pfail ()
-    }
-
-let pdigit = psatisfy Char.IsDigit
-
-let pletter = psatisfy Char.IsLetter
-
-let pwhitespace = psatisfy Char.IsWhiteSpace
-
-// Similar to *pmany*, this parser works gainst 1 or more 'T, rather than 0 or more.
+// Similar to *pmany*, this parser works against 1 or more 'T, rather than 0 or more.
+// For example, *pmany1 pletter* is a parse of 1 or more consecutive letters in a string.
 //
-let pmany1 t = 
+let pmany1 tparser = 
     parser {
-        let! head = t
-        let! tail = pmany t
+        let! head = tparser
+        let! tail = pmany tparser
         return head::tail
     }
 
-// *pmap* is functionally equeivalent to SelectMany in C# LINQ.
-//
-let pmap mappingFunc t =
+let psatisfy (satisfy : char -> bool) : Parser<char> =
     parser {
-        let! v = t 
-        return mappingFunc v
+        let! char = pchar     // parse a char
+        if satisfy char then  // if the satisfy function returns true
+            return char       // return char
+        else
+            return! pfail ()  // else fail
     }
 
-// Given a list of char digits, returns an single integer value. For example:
-// ['1'; '2'; '0'] becomes 120. Think LINQs Aggregate method in C#.
+// A parser that parses a digit or fails.
+//
+let pdigit = psatisfy Char.IsDigit
+
+// A parser that parses a letter or fails.
+//
+let pletter = psatisfy Char.IsLetter
+
+// A parser that parses whitespace or fails.
+//
+let pwhitespace = psatisfy Char.IsWhiteSpace
+
+// *pmap* takes a fmapping unction that maps a type T to a type U and a parser of T.
+// The mapping function is applied to the value parsed and is then returned. An F#
+// *map* is functionally equivalent to Select in LINQ.
+//
+// For an example of using *pmap*, see *pint* below.
+//
+let pmap mappingFunc tparser =
+    parser {
+        let! value = tparser
+        return mappingFunc value
+    }
+
+// A useful helper function that, given a list of char digits, returns an single
+// integer value. For example: // ['1'; '2'; '0'] becomes 120.
+// Think LINQs Aggregate method in C#.
 //
 let makeint listOfChars =
     let foldingFunc aggr ch = 
         aggr * 10 + (int ch - int '0')
     listOfChars |> List.fold foldingFunc 0
 
+// Pass into *pmap* a mapping function that turns a list of digits into an integer,
+// and a parser that can parse one or more digits. The result is a strongly-typed 
+// Parser<int> that can parse out a set of consecutive digits in a string, and produce
+// an integer; how cool is that?
+//
 let pint = pmany1 pdigit |> pmap makeint
 
+// A parser of strings, using *pmany1* to get a list of characters, and then *pmap* to
+// map that list to a single string. *tparser* could be *tdigit* or *tletter*, for 
+// example. Notice how the type of *pstring* is Parser<string>!
+//
+let pstring (tparser : Parser<char>) : Parser<string> =
+    pmany1 tparser |> pmap (fun  charList -> charList |> List.toArray |> String)
+
+// A parser that skips over a given character.
 let pskipchar ch =
     parser {
         let! char = pchar
@@ -156,12 +191,6 @@ let padd =
         let! second = pint
         return first + second
     }
-
-// A parser of strings, using *pmany1* to get a list of characters, and then *pmap* to
-// map that list to a single string.
-//
-let pstring (t : Parser<char>) : Parser<string> =
-    pmany1 t |> pmap (fun  charList -> charList |> List.toArray |> String)
 
 let pkeyvalue =
     parser {
