@@ -3,7 +3,7 @@
 // Here we define a Parser of *T* as a **Type** that takes a *string* and an *int* (a position
 // within that string), and returns an **Option** which is a tuple of (*T* and *int*).
 // See also: https://fsharpforfunandprofit.com/posts/designing-with-types-single-case-dus/
-//
+// 1+2
 type Parser<'T> = P of (string -> int -> Option<'T * int>)
 
 // The basic building block, *pchar*. This fundamental function is of type **P**.
@@ -77,7 +77,10 @@ let pbind (ufunc : 'T -> Parser<'U>) (P tparser) : Parser<'U> =
 // This means that **tparser |> pcombine uparser** runs *tparser*, discards the result,
 // and returns the result of *uparser*.
 //
-let pcombine uparser tparser = tparser |> pbind (fun _ -> uparser)
+let pcombine (uparser : Parser<'U>) (tparser : Parser<'T>) : Parser<'U> = tparser |> pbind (fun _ -> uparser)
+let pkeepRight uparser tparser = pcombine uparser tparser
+let pkeepLeft (uparser : Parser<'U>) (tparser : Parser<'T>) : Parser<'T> = 
+  tparser |> pbind (fun tv -> uparser |> pbind (fun _ -> preturn tv))
 
 // *pmany* takes a parser of a list of (*tparser*), and returns Some tuple of values and
 // the position *pos* at which the parser failed. We can use this to parser 0 or more
@@ -90,6 +93,24 @@ let pmany (P tparser) : Parser<'T list> =
             | None -> Some (List.rev values, currentPos) // reverse the list to regain proper ordering
             | Some (tvalue, tpos) -> loop (tvalue::values) tpos
         loop [] pos
+
+// ((1 + 2) + 3) + 4
+// int -> (string -> float)
+let pchainl1 (term : Parser<'T>) (sep : Parser<'T -> 'T -> 'T>) : Parser<'T> =
+    let (P termfun) = term
+    let (P sepfun) = sep
+    P <| fun str pos ->
+        let rec loop aggr currentPos =
+            match sepfun str currentPos with
+            | None -> Some (aggr, currentPos)
+            | Some (sepCombiner, sepPos) ->
+                match termfun str sepPos with
+                | None -> None
+                | Some (termValue, termPos) -> loop (sepCombiner aggr termValue) termPos
+        match termfun str pos with
+        | None -> None
+        | Some (termValue, termPos) -> loop termValue termPos
+
 
 // A computation expression; this will make it simpler for us to build up more 
 // complex parsers. This is a standard pattern in functional programming. Notice
@@ -113,6 +134,42 @@ type ParserBuilder () =
     end
 let parser = ParserBuilder ()
 
+// *pmap* takes a mapping function that maps a type T to a type U, and a parser of T.
+// The mapping function is applied to the value parsed and is then returned. An F#
+// *map* is functionally equivalent to Select in LINQ.
+//
+// For an example of using *pmap*, see *pint* below.
+//
+let pmap mappingFunc tparser =
+    parser {
+        let! value = tparser
+        return mappingFunc value
+    }
+
+
+let ppair uparser tparser =
+    parser {
+        let! first = tparser
+        let! second = uparser
+        return first, second
+    }
+// (\d|\w)
+
+let porElse (P uparser) (P tparser) =
+    P <| fun str pos ->
+        match tparser str pos with
+        | None -> uparser str pos
+        | Some (tvalue, tpos) -> Some (tvalue, tpos)
+
+
+type Parser<'T> with
+    static member (>>=) (t, uf) = pbind uf t
+    static member (>>.) (t, u) = pkeepRight u t
+    static member (.>>) (t, u) = pkeepLeft u t
+    static member (.>>.) (t, u) = ppair u t
+    static member (|>>) (t, m) = pmap m t
+    static member (<|>) (t, u) = porElse u t
+
 // From this point on, we express parsers using the computation expression above, as it
 // simplifies combining parsers for many people.
 
@@ -125,6 +182,17 @@ let pmany1 tparser =
         let! tail = pmany tparser
         return head::tail
     }
+
+let pcreateParserForwardedToRef<'T> () : Parser<'T>*Parser<'T> ref =
+    let dummyParser =
+        P <| fun str pos ->
+            failwith "Forwarded parser not initialized"
+    let refToParser = ref dummyParser
+    let forwardingParser = 
+        P <| fun str pos ->
+            let (P p) = !refToParser
+            p str pos
+    forwardingParser, refToParser
 
 let psatisfy (satisfy : char -> bool) : Parser<char> =
     parser {
@@ -147,17 +215,6 @@ let pletter = psatisfy Char.IsLetter
 //
 let pwhitespace = psatisfy Char.IsWhiteSpace
 
-// *pmap* takes a mapping function that maps a type T to a type U, and a parser of T.
-// The mapping function is applied to the value parsed and is then returned. An F#
-// *map* is functionally equivalent to Select in LINQ.
-//
-// For an example of using *pmap*, see *pint* below.
-//
-let pmap mappingFunc tparser =
-    parser {
-        let! value = tparser
-        return mappingFunc value
-    }
 
 // A useful helper function that, given a list of char digits, returns an single
 // integer value. For example: // ['1'; '2'; '0'] becomes 120.
@@ -192,13 +249,13 @@ let pskipchar ch =
             return! pfail ()
     }
 
-let padd =
-    parser {
-        let! first = pint      // first integer
-        do! pskipchar '+'      // using do! because skipchar returns unit-like value
-        let! second = pint     // second integer
-        return first + second  // return the sum
-    }
+//let padd =
+//    parser {
+//        let! first = pint      // first integer
+//        do! pskipchar '+'      // using do! because skipchar returns unit-like value
+//        let! second = pint     // second integer
+//        return first + second  // return the sum
+//    }
 
 // Parser for a key-value pair of the form "<string>=<int>"
 let pkeyvalue =
@@ -223,20 +280,77 @@ let pkeyvalues =
         return first::tail
     }
 
+type BinaryOp = Add|Subtract|Multiply|Divide
+
+// AST = Abstract Syntax Tree
+type AST =
+    | Const of int
+    | Variable of string
+    | BinaryOperation of AST*BinaryOp*AST
+// 1+x*(3 + 1)
+let x = 
+    BinaryOperation (Const 1, Add, BinaryOperation (Variable "x", Multiply, Const 3))
+
+// 1*(1+3)
+
+let pForwardedAST, pRefToForwardedAST = pcreateParserForwardedToRef<AST> ()
+
+let psubExpr = pskipchar '(' >>. pForwardedAST .>> pskipchar ')'
+
+let pconst = pint |>> Const
+
+//let pvariable = pchar |>> (fun c -> Variable (string c))
+let pvariable = pstring pletter |>> Variable
+
+let pop opChar operator = 
+    pskipchar opChar 
+    |>> fun c -> fun leftTree rightTree -> BinaryOperation (leftTree, operator, rightTree)
+
+let padd = pop '+' Add
+let psubtract = pop '-' Subtract
+let pmultiply = pop '*' Multiply
+let pdivide = pop '/' Divide
+
+let pAllOp = padd <|> psubtract <|> pmultiply <|> pdivide
+
+let pmultiOrDivide = pmultiply <|> pdivide
+let paddOrSubtract = padd <|> psubtract
+
+let pterm = psubExpr <|> pconst <|> pvariable
+
+let pchainMultiDivide = pchainl1 pterm pmultiOrDivide
+let pchainAddSubtract = pchainl1 pchainMultiDivide paddOrSubtract
+do
+    pRefToForwardedAST := pchainAddSubtract
+let pAST = pchainAddSubtract
+
+// https://github.com/stephan-tolksdorf/fparsec
+// https://github.com/stephan-tolksdorf/fparsec/blob/master/Samples/JSON/parser.fs
+// https://www.quanttec.com/fparsec/tutorial.html#
+// https://github.com/mrange/fable-formlets/blob/master/WHY.md
 [<EntryPoint>]
 let main argv =
     //let p = pchar |> pbind (fun f -> pchar |> pbind (fun s -> preturn (f, s)))
     //let p = pchar |> pcombine pchar
-    let p = 
-        parser {
-            let! first = pchar
-            let! second = pchar
-            let! third = pchar
-            return first, second, third
-        }
-    prun pint "42Hello Marten from F#!" |> printfn "%A"
+    //let p = 
+    //    parser {
+    //        let! first = pchar
+    //        let! second = pchar
+    //        let! third = pchar
+    //        return first, second, third
+    //    }
 
-    prun pkeyvalues "answer=42 question=22 test=1" |> printfn "%A"
+    let p = pAST
+    prun p "1" |> printfn "%A"
+    prun p "1+2" |> printfn "%A"
+    prun p "1+2-3*4" |> printfn "%A"
+    prun p "(x+(2-3))*y" |> printfn "%A"
+
+    //prun pint "42Hello Marten from F#!" |> printfn "%A"
+
+    //prun pkeyvalues "answer=42 question=22 test=1" |> printfn "%A"
+
+
 
     0 // return an integer exit code
 
