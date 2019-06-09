@@ -18,7 +18,7 @@ I went over the code, adding comments and making the names used in functions a l
 
 *2019-06-03*
 
-Episode 33 of Codebase Alpha saw Mårten Rånge return to help me build upon the firm foundations established in Episode 27. Together we built more parser combinators, ending up with a parser that should create expression trees from arithmentic strings such as 
+Episode 33 of Codebase Alpha saw Mårten Rånge return to help me build upon the firm foundations established in Episode 27. Together we built more parser combinators, ending up with a parser that should create expression trees from arithmetic strings such as 
 
 - `a+6*(5+b)/(4+1)`
 
