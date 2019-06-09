@@ -1,5 +1,7 @@
 # fsharp-parser
 
+![Twitter](https://img.shields.io/twitter/follow/codebasealpha.svg?style=social)
+
 *2019-05-20*
 
 This is a project that was begun on my live coding stream [Codebase Alpha](https://twitch.tv/codebasealpha) episode 27. That episode is archived to my [Youtube channel](https://www.youtube.com/channel/UCFFtfkaWjMb9UMDpPVnC1Sg), along with all of my other videos. My special guest on episode 27 was Mårten Rånge, and he led me through the process of building a parser in F# from first principles.
