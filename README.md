@@ -16,3 +16,11 @@ Bear in mind that the stated aim of the stream was to end up with software that 
 
 I went over the code, adding comments and making the names used in functions a little less terse. No doubt, the comments will require revision and correction over time, as my understanding grows!
 
+*2019-06-03*
+
+Episode 33 of Codebase Alpha saw Mårten Rånge return to help me build upon the firm foundations established in Episode 27. Together we built more parser combinators, ending up with a parser that should create expression trees from arithmentic strings such as 
+
+- `a+6*(5+b)/(4+1)`
+
+i.e full support for variables, operator presidence and parentheses! This episode also covered creating custom operators for our `Parser<'T>` type, to make using the building blocks easier and more fluent. We ended up with a brief review of the _FParsec_ parser framework.
+
